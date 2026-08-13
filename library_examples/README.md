@@ -32,10 +32,10 @@ Open a marimo notebook:
 uv run marimo edit library_examples/mne/01_spectrum.py
 ```
 
-Examples should also be executable without the editor:
+To output results run:
 
 ```bash
-uv run python library_examples/mne/01_spectrum.py
+uv run marimo export pdf --no-include-inputs library_examples/mne/01_spectrum.py -o library_examples/mne/01_spectrum.pdf
 ```
 
 ## Current Libraries

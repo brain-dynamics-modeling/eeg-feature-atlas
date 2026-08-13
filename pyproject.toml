@@ -9,4 +9,7 @@ dependencies = [
     "matplotlib",
     "mne",
     "numpy",
+    "nbformat", 
+    "nbconvert",
+    "playwright",
 ]
