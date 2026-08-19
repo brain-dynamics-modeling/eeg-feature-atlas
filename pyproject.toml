@@ -9,7 +9,7 @@ dependencies = [
     "matplotlib",
     "mne",
     "numpy",
-    "nbformat", 
+    "nbformat",
     "nbconvert",
     "playwright",
-]
+    "antropy>=0.2.2",

@@ -30,12 +30,14 @@ Open a marimo notebook:
 
 ```bash
 uv run marimo edit library_examples/mne/01_spectrum.py
+uv run marimo edit library_examples/antropy/01_spectral_entropy.py
 ```
 
 To output results run:
 
 ```bash
 uv run marimo export pdf --no-include-inputs library_examples/mne/01_spectrum.py -o library_examples/mne/01_spectrum.pdf
+uv run marimo export pdf --no-include-inputs library_examples/antropy/01_spectral_entropy.py -o library_examples/antropy/01_spectral_entropy.pdf
 ```
 
 ## Current Libraries
