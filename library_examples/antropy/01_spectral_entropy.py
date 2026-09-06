@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.16"
+__generated_with = "0.24.0"
 app = marimo.App(width="medium")
 
 
@@ -10,20 +10,32 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
     import antropy as ant
+    import mne
 
+    from mne.channels import make_standard_montage
     from mne.datasets import eegbci
     from mne.io import read_raw_edf
 
-    return ant, eegbci, mo, np, plt, read_raw_edf
+    return (
+        ant,
+        eegbci,
+        make_standard_montage,
+        mne,
+        mo,
+        np,
+        plt,
+        read_raw_edf,
+    )
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # AntroPy: Spectral Entropy
+    # AntroPy: Spectral Entropy on Real EEG
 
-    This example demonstrates how to calculate **spectral entropy**
-    using **AntroPy (`spectral_entropy`)**.
+    This example demonstrates how **spectral entropy** — computed
+    with **AntroPy (`spectral_entropy`)** — behaves on real EEG
+    recordings rather than on synthetic signals.
 
     The workflow follows the EEG Feature Atlas structure:
 
@@ -32,13 +44,24 @@ def _(mo):
 
     We will:
 
-    1. build intuition with two synthetic signals (clean vs. noisy);
-    2. calculate spectral entropy for both;
-    3. download a public EEG recording;
-    4. select a single EEG channel and calculate its spectral entropy;
-    5. compare all three values numerically and visually;
+    1. download three real EEG recordings for one subject (rest,
+       motor execution, motor imagery);
+    2. compare spectral entropy for one channel across these three
+       states;
+    3. compare spectral entropy across several channels for one
+       state;
+    4. compare spectral entropy across frequency bands for one
+       channel and one state;
+    5. visualize the spatial distribution of spectral entropy
+       across the scalp, per frequency band;
     6. interpret the feature carefully;
     7. summarize the feature for the Atlas.
+
+    The goal of these comparisons is **not** to prove a
+    physiological law or build a classifier — it is simply to show
+    clearly that spectral entropy is a real, measurable property of
+    EEG signals that varies with the state, the channel, and the
+    frequency band chosen.
     """)
     return
 
@@ -55,17 +78,18 @@ def _(mo):
     | Method | Shannon entropy of the power spectral density (PSD) |
     | Feature | Spectral entropy (complexity measure) |
     | Domain | Spectral / Signal complexity |
-    | Input | 1-D signal (synthetic array or single EEG channel) |
-    | Output | Single scalar value |
-    | Visualization | Bar chart (comparison across signals) |
+    | Input | 1-D signal (single EEG channel, optionally band-limited) |
+    | Output | Single scalar value per input signal |
+    | Visualization | Bar charts (cross-condition comparison) + scalp topomaps |
 
     **Important distinction:**
 
-    - PSD estimation (via `method='welch'` or `'fft'`) = spectral
-      estimation step, internal to the function;
+    - PSD estimation (via `method='welch'`) = spectral estimation
+      step, internal to the function;
     - Spectral entropy = the feature extracted from that PSD;
-    - Bar chart = visualization used to compare the resulting
-      scalar values.
+    - Bar charts / topomaps = visualizations used to compare the
+      resulting scalar values across conditions, channels, and
+      scalp locations.
 
     Spectral entropy is defined as the Shannon entropy of the
     normalized PSD:
@@ -78,97 +102,6 @@ def _(mo):
     bins, so the result is bounded to **[0, 1]** regardless of
     signal length or sampling rate.
     """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Part 1 — Building intuition with synthetic signals
-
-    Spectral entropy measures how concentrated or spread out a
-    signal's power is across frequencies.
-
-    - **Lower** spectral entropy → power is concentrated in a
-      small number of frequencies.
-    - **Higher** spectral entropy → power is spread across many
-      frequencies.
-
-    Before applying this to real EEG, we compare a simple
-    periodic signal with a noisy signal, where the expected
-    direction of the result is known in advance.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### Create a simple 10 Hz signal
-
-    A 10 Hz rhythm falls within the **alpha frequency range**
-    commonly studied in EEG.
-
-    This signal is intentionally simple and regular, so its power
-    is concentrated around one frequency.
-    """)
-    return
-
-
-@app.cell
-def _(np):
-    sf = 100
-    _duration = 10
-
-    time = np.arange(0, _duration, 1 / sf)
-
-    clean_signal = np.sin(2 * np.pi * 10 * time)
-    return clean_signal, sf, time
-
-
-@app.cell
-def _(clean_signal, plt, time):
-    _fig, _ax = plt.subplots()
-
-    _ax.plot(time, clean_signal)
-    _ax.set_xlabel("Time (s)")
-    _ax.set_ylabel("Amplitude")
-    _ax.set_title("10 Hz Sine Wave")
-
-    _fig
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### Create a noisy signal
-
-    Next, we create a random noisy signal. Unlike the 10 Hz sine
-    wave, this signal's power is not concentrated at any single
-    frequency, so its spectrum is expected to be broader.
-    """)
-    return
-
-
-@app.cell
-def _(np, time):
-    _rng = np.random.default_rng(42)
-
-    noisy_signal = _rng.normal(size=time.shape)
-    return (noisy_signal,)
-
-
-@app.cell
-def _(noisy_signal, plt, time):
-    _fig, _ax = plt.subplots()
-
-    _ax.plot(time, noisy_signal)
-    _ax.set_xlabel("Time (s)")
-    _ax.set_ylabel("Amplitude")
-    _ax.set_title("Random Noisy Signal")
-
-    _fig
     return
 
 
@@ -189,77 +122,19 @@ def _(mo):
       across signals of different length or sampling rate.
     - `nperseg` (not set here) – AntroPy leaves this at `None`,
       which defers to `scipy.signal.welch`'s own default of
-      **256 samples per segment**. This is a hidden-but-real
-      default: at `sf=100 Hz` it corresponds to ~2.56 s segments;
-      for the EEG recording later in this notebook (`sf≈160 Hz`)
-      it corresponds to ~1.6 s segments. Changing `nperseg`
-      changes frequency resolution and can change the resulting
-      entropy value, so it should be reported when comparing
-      results across studies.
-    """)
-    return
+      **256 samples per segment**. At the EEGBCI sampling rate
+      (`sf=160 Hz`) this corresponds to ~1.6 s segments. Changing
+      `nperseg` changes frequency resolution and can change the
+      resulting entropy value, so it should be reported when
+      comparing results across studies.
 
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Calculate spectral entropy
-
-    We now calculate the normalized spectral entropy of both
-    synthetic signals using AntroPy.
-
-    The 10 Hz sine wave is expected to have **lower** spectral
-    entropy, since most of its power is concentrated around one
-    frequency. The noisy signal is expected to have **higher**
-    spectral entropy, since its power is spread across a wider
-    frequency range.
-    """)
-    return
-
-
-@app.cell
-def _(ant, clean_signal, noisy_signal, sf):
-    clean_entropy = ant.spectral_entropy(
-        clean_signal,
-        sf=sf,
-        method="welch",
-        normalize=True,
-    )
-
-    noisy_entropy = ant.spectral_entropy(
-        noisy_signal,
-        sf=sf,
-        method="welch",
-        normalize=True,
-    )
-    return clean_entropy, noisy_entropy
-
-
-@app.cell(hide_code=True)
-def _(clean_entropy, mo, noisy_entropy):
-    mo.md(f"""
-    ## Numerical output — synthetic signals
-
-    | Signal | Normalized spectral entropy |
-    |---|---|
-    | 10 Hz sine wave | {clean_entropy:.3f} |
-    | Random noise | {noisy_entropy:.3f} |
-
-    Each value is a single scalar in [0, 1]. As expected, the
-    clean periodic signal has substantially lower entropy than
-    the random noise, confirming the direction of the effect
-    before applying the same feature to real EEG.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Part 2 — Applying spectral entropy to real EEG
-
-    After validating the feature's behavior on synthetic signals,
-    we now apply it to a real EEG recording.
+    AntroPy's `spectral_entropy` has no built-in frequency-band
+    limit, so the **band-specific comparisons below band-pass
+    filter the EEG channel first** (via MNE's `Raw.filter()`) and
+    then compute spectral entropy on the filtered signal. This
+    filtering step is a real, visible transformation of the input
+    — not a hidden default — and it directly determines which part
+    of the spectrum the entropy value describes.
     """)
     return
 
@@ -273,16 +148,15 @@ def _(mo):
     (EEGBCI)** distributed through PhysioNet — the same dataset
     used in the MNE and YASA examples in this Atlas.
 
-    **Example recording:**
+    For one subject, we compare three recordings that correspond
+    to three different states, using the run mapping documented for
+    EEGBCI:
 
-    - Subject: 1
-    - Run: 2
-    - Condition: baseline, eyes closed
-    - Recording type: continuous EEG
-
-    Run 2 corresponds to the eyes-closed baseline according to
-    the MNE EEGBCI dataset documentation — the same mapping
-    verified in the YASA example.
+    | State | Run | Description |
+    |---|---|---|
+    | Rest | 2 | Baseline, eyes closed |
+    | Execution | 3 | Task 1 — real (executed) opening/closing of left or right fist |
+    | Imagery | 4 | Task 2 — imagined opening/closing of left or right fist |
 
     The data are downloaded automatically by MNE if they are not
     already available locally.
@@ -291,56 +165,58 @@ def _(mo):
 
 
 @app.cell
-def _(eegbci):
-    subject = 1
-    run = 2
+def _(eegbci, make_standard_montage, read_raw_edf):
+    def load_run(subject, run):
+        """Download (if needed), load, and prepare one EEGBCI run."""
+        eeg_files = eegbci.load_data(subject, [run])
 
-    eeg_files = eegbci.load_data(subject, [run])
+        raw = read_raw_edf(
+            eeg_files[0],
+            preload=True,
+            verbose=False,
+        )
 
-    eeg_files
-    return eeg_files, run, subject
+        # Preprocessing: standardize EEGBCI channel names to MNE-compatible
+        # names, then attach standard 10-05 electrode positions so the
+        # recording can be used for the scalp topomaps below. No filtering,
+        # resampling, epoching, ICA, or artifact removal is applied.
+        eegbci.standardize(raw)
+        montage = make_standard_montage("standard_1005")
+        raw.set_montage(montage)
+
+        return raw
+
+    return (load_run,)
 
 
 @app.cell
-def _(eeg_files, eegbci, read_raw_edf):
-    raw = read_raw_edf(
-        eeg_files[0],
-        preload=True,
-        verbose=False,
-    )
+def _(load_run):
+    subject = 1
+    state_runs = {"Rest": 2, "Execution": 3, "Imagery": 4}
 
-    # Preprocessing: standardize EEGBCI channel names to MNE-compatible
-    # names. No montage is attached here — this example does not
-    # produce a spatial (topomap) visualization, so electrode
-    # positions are not needed. No filtering, resampling, epoching,
-    # ICA, or artifact removal is applied.
-    eegbci.standardize(raw)
-
-    raw
-    return (raw,)
+    raws = {state: load_run(subject, run) for state, run in state_runs.items()}
+    return raws, state_runs, subject
 
 
 @app.cell(hide_code=True)
-def _(mo, raw, run, subject):
+def _(mo, raws, state_runs, subject):
+    _rows = "\n".join(
+        f"| {state} | {state_runs[state]} | {raws[state].info['sfreq']:.1f} Hz | "
+        f"{len(raws[state].ch_names)} | {raws[state].duration:.1f} s |"
+        for state in raws
+    )
+
     mo.md(f"""
     ## Recording information
 
-    | Field | Value |
-    |---|---|
-    | Subject | {subject} |
-    | Run | {run} |
-    | Channels | {len(raw.ch_names)} |
-    | Sampling frequency | {raw.info["sfreq"]:.1f} Hz |
-    | Duration | {raw.duration:.1f} seconds |
+    | State | Run | Sampling frequency | Channels | Duration |
+    |---|---|---|---|---|
+    {_rows}
 
-    ### Preparation
-
-    Only channel-name standardization is applied. No filtering,
-    resampling, epoching, ICA, or artifact removal is performed,
-    and no montage is attached (not needed without a spatial
-    visualization). This is intentional: the example focuses on
-    the AntroPy feature itself rather than a complete EEG
-    preprocessing pipeline.
+    Subject: **{subject}**. Only channel-name standardization and
+    montage attachment are applied to each recording — no
+    filtering, resampling, epoching, ICA, or artifact removal
+    beyond what each comparison below applies explicitly.
     """)
     return
 
@@ -348,83 +224,342 @@ def _(mo, raw, run, subject):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Select a channel and compute the feature
+    ## Comparison 1 — One channel, across states
 
-    For simplicity, we select a single EEG channel and calculate
-    its normalized spectral entropy using the same parameters
-    used for the synthetic signals above.
+    Using a single central channel (`Cz`), we compute the
+    (full-band, unfiltered) normalized spectral entropy for three
+    states.
+
+    The **rest** recording (run 2) is a single continuous baseline,
+    so the full run is used. The **execution** and **imagery**
+    recordings (runs 3 and 4) are not pure task recordings — each
+    is annotated with alternating `T0` (rest), `T1` (left-fist
+    onset), and `T2` (right-fist onset) segments, with `T0` making
+    up roughly half of the run. Computing entropy over the full run
+    would mix task and rest together and dilute the very contrast
+    we want to show, so for these two states we concatenate only
+    the `T1` (left-fist) task epochs from the annotations before
+    computing spectral entropy — keeping the movement side fixed
+    so laterality doesn't become a second, uncontrolled variable
+    alongside state.
+
+    All three values still use the same channel and the same
+    `spectral_entropy` parameters, so they remain directly
+    comparable.
     """)
     return
 
 
 @app.cell
-def _(raw):
-    channel_name = raw.ch_names[0]
+def _(ant, np, raws):
+    def extract_task_epochs(raw, channel, task_code="T1"):
+        """Concatenate only the annotated `task_code` segments for one channel.
 
-    eeg_signal = raw.get_data(picks=[channel_name])[0]
+        Runs 3 and 4 interleave rest (T0) with task trials (T1/T2), so
+        slicing out just the T1 (left-fist) onsets gives a signal that
+        actually reflects the task, rather than ~50% rest + ~50% task.
+        """
+        sf = raw.info["sfreq"]
+        segments = [
+            raw.get_data(
+                picks=[channel],
+                start=int(round(onset * sf)),
+                stop=int(round((onset + duration) * sf)),
+            )[0]
+            for onset, duration, description in zip(
+                raw.annotations.onset,
+                raw.annotations.duration,
+                raw.annotations.description,
+            )
+            if description == task_code
+        ]
+        return np.concatenate(segments)
 
-    eeg_sf = raw.info["sfreq"]
-    return channel_name, eeg_sf, eeg_signal
+    state_comparison_channel = "Cz"
+
+    state_entropies = {}
+    for _state, _raw in raws.items():
+        _sf = _raw.info["sfreq"]
+        if _state == "Rest":
+            _sig = _raw.get_data(picks=[state_comparison_channel])[0]
+        else:
+            _sig = extract_task_epochs(_raw, state_comparison_channel, task_code="T1")
+        state_entropies[_state] = ant.spectral_entropy(
+            _sig, sf=_sf, method="welch", normalize=True
+        )
+
+    return state_comparison_channel, state_entropies
 
 
 @app.cell
-def _(ant, eeg_sf, eeg_signal):
-    eeg_entropy = ant.spectral_entropy(
-        eeg_signal,
-        sf=eeg_sf,
-        method="welch",
-        normalize=True,
+def _(plt, state_comparison_channel, state_entropies):
+    _fig, _ax = plt.subplots(figsize=(6, 4))
+
+    _ax.bar(
+        state_entropies.keys(),
+        state_entropies.values(),
+        color=["#55A868", "#DD8452", "#4C72B0"],
     )
-    return (eeg_entropy,)
-
-
-@app.cell(hide_code=True)
-def _(channel_name, eeg_entropy, mo):
-    mo.md(f"""
-    ## Numerical output — EEG channel
-
-    - **Channel:** {channel_name}
-    - **Normalized spectral entropy:** {eeg_entropy:.3f}
-
-    This is a single scalar summarizing how broadly the spectral
-    power of this one EEG channel is distributed across
-    frequencies, using the same definition and parameters applied
-    to the synthetic signals above.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Visualize — comparing all three values
-
-    All three spectral entropy values share the same scale
-    ([0, 1], `normalize=True`) and the same estimation method
-    (`method="welch"`), so they can be compared directly in a
-    single bar chart.
-    """)
-    return
-
-
-@app.cell
-def _(channel_name, clean_entropy, eeg_entropy, noisy_entropy, plt):
-    _labels = ["10 Hz sine\n(synthetic)", "Random noise\n(synthetic)",
-               f"EEG channel\n({channel_name})"]
-    _values = [clean_entropy, noisy_entropy, eeg_entropy]
-
-    _bar_figure, _bar_ax = plt.subplots(figsize=(7, 4))
-
-    _bar_ax.bar(_labels, _values, color=["#4C72B0", "#DD8452", "#55A868"])
-    _bar_ax.set_ylabel("Normalized spectral entropy")
-    _bar_ax.set_ylim(0, 1)
-    _bar_ax.set_title("Spectral Entropy Across Signals")
-    _bar_ax.grid(axis="y", alpha=0.2)
+    _ax.set_ylabel("Normalized spectral entropy")
+    _ax.set_ylim(0, 1)
+    _ax.set_title(f"Spectral Entropy Across States (channel {state_comparison_channel})")
+    _ax.grid(axis="y", alpha=0.2)
 
     plt.tight_layout()
-    plt.close(_bar_figure)
+    plt.close(_fig)
+    _fig
+    return
 
-    _bar_figure
+
+@app.cell(hide_code=True)
+def _(mo, state_comparison_channel, state_entropies):
+    _lines = "\n".join(
+        f"- **{state}:** {value:.3f}" for state, value in state_entropies.items()
+    )
+    mo.md(f"""
+    **Channel `{state_comparison_channel}`, normalized spectral entropy:**
+
+    {_lines}
+
+    These three values were computed with identical parameters
+    (`method="welch"`, `normalize=True`, same channel). Rest uses
+    the full baseline run; execution and imagery use only their
+    concatenated `T1` (left-fist) task epochs, so all three
+    reflect the intended state rather than a mix of state and rest.
+    Any difference between them reflects the recording itself, not
+    the analysis settings. This shows that spectral entropy is not
+    a fixed property of a channel — it changes with the state of
+    the subject during recording.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Comparison 2 — One state, across channels
+
+    Using the imagery recording, we compute spectral entropy for
+    three channels spanning frontal, central, and
+    parietal scalp regions.
+    """)
+    return
+
+
+@app.cell
+def _(ant, raws):
+    channel_comparison_state = "Imagery"
+    comparison_channels = ["Fz", "Cz", "Pz"]
+
+    _raw = raws[channel_comparison_state]
+    _sf = _raw.info["sfreq"]
+
+    channel_entropies = {
+        ch: ant.spectral_entropy(
+            _raw.get_data(picks=[ch])[0], sf=_sf, method="welch", normalize=True
+        )
+        for ch in comparison_channels
+    }
+
+    return channel_comparison_state, channel_entropies, comparison_channels
+
+
+@app.cell
+def _(channel_comparison_state, channel_entropies, plt):
+    _fig, _ax = plt.subplots(figsize=(6, 4))
+
+    _ax.bar(
+        channel_entropies.keys(),
+        channel_entropies.values(),
+        color=["#4C72B0", "#55A868", "#C44E52"],
+    )
+    _ax.set_ylabel("Normalized spectral entropy")
+    _ax.set_ylim(0, 1)
+    _ax.set_title(f"Spectral Entropy Across Channels ({channel_comparison_state} state)")
+    _ax.grid(axis="y", alpha=0.2)
+
+    plt.tight_layout()
+    plt.close(_fig)
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(channel_comparison_state, channel_entropies, mo):
+    _lines = "\n".join(
+        f"- **{ch}** (Fz = frontal, Cz = central, Pz = parietal): {value:.3f}"
+        for ch, value in channel_entropies.items()
+    )
+    mo.md(f"""
+    **{channel_comparison_state} state, normalized spectral entropy:**
+
+    {_lines}
+
+    All three values come from the same recording and the same
+    time window, computed with identical parameters — only the
+    channel (scalp location) differs. This shows that spectral
+    entropy is not uniform across the scalp at a given moment.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Comparison 3 — One channel and state, across frequency bands
+
+    Using channel `Cz` in the imagery recording, we band-pass
+    filter the signal into three classic EEG bands before computing
+    spectral entropy on each filtered version. This measures how
+    concentrated or spread out the spectrum is *within* each band,
+    rather than across the full spectrum.
+    """)
+    return
+
+
+@app.cell
+def _(ant, raws):
+    band_comparison_state = "Imagery"
+    band_comparison_channel = "Cz"
+    comparison_bands = {"Theta": (4, 8), "Alpha": (8, 13), "Beta": (13, 30)}
+
+    _raw = raws[band_comparison_state]
+    _sf = _raw.info["sfreq"]
+
+    band_entropies = {}
+    for _band_name, (_lo, _hi) in comparison_bands.items():
+        _raw_band = _raw.copy().filter(
+            l_freq=_lo, h_freq=_hi, picks=[band_comparison_channel], verbose=False
+        )
+        _sig = _raw_band.get_data(picks=[band_comparison_channel])[0]
+        band_entropies[_band_name] = ant.spectral_entropy(
+            _sig, sf=_sf, method="welch", normalize=True
+        )
+
+    return band_comparison_channel, band_comparison_state, band_entropies, comparison_bands
+
+
+@app.cell
+def _(band_comparison_channel, band_comparison_state, band_entropies, plt):
+    _fig, _ax = plt.subplots(figsize=(6, 4))
+
+    _ax.bar(
+        band_entropies.keys(),
+        band_entropies.values(),
+        color=["#8172B2", "#CCB974", "#64B5CD"],
+    )
+    _ax.set_ylabel("Normalized spectral entropy")
+    _ax.set_ylim(0, 1)
+    _ax.set_title(
+        f"Spectral Entropy Across Bands "
+        f"(channel {band_comparison_channel}, {band_comparison_state} state)"
+    )
+    _ax.grid(axis="y", alpha=0.2)
+
+    plt.tight_layout()
+    plt.close(_fig)
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    band_comparison_channel,
+    band_comparison_state,
+    band_entropies,
+    comparison_bands,
+    mo,
+):
+    _lines = "\n".join(
+        f"- **{band}** ({comparison_bands[band][0]}–{comparison_bands[band][1]} Hz): {value:.3f}"
+        for band, value in band_entropies.items()
+    )
+    mo.md(f"""
+    **Channel `{band_comparison_channel}`, {band_comparison_state} state,
+    normalized spectral entropy per band:**
+
+    {_lines}
+
+    Each value is computed on the same channel and recording, after
+    band-pass filtering to a different frequency range. This shows
+    that spectral entropy is not a single number for a channel —
+    it depends on which part of the spectrum is included, since a
+    narrower band can concentrate or spread out power differently
+    than the full spectrum.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Spatial distribution of spectral entropy (topomap)
+
+    Beyond single-channel comparisons, spectral entropy can be
+    computed independently for every EEG channel and displayed as a
+    scalp topomap — the same visualization already used in this
+    Atlas for spectral **power** (`mne/01_spectrum.py`).
+
+    The key difference: the power topomap shows how much energy
+    each region has in a band. This topomap instead shows, within
+    each band, how *concentrated or spread out* that region's
+    spectrum is — a channel can have strong power in a band while
+    still having high or low spectral entropy in that same band.
+
+    We use the rest recording (run 2) — the same recording used for
+    the power topomap in `mne/01_spectrum.py` — so the two figures
+    are directly comparable.
+    """)
+    return
+
+
+@app.cell
+def _(ant, mne, np, raws):
+    topomap_state = "Rest"
+    topomap_bands = {"Theta": (4, 8), "Alpha": (8, 13), "Beta": (13, 30), "Gamma": (30, 45)}
+
+    _raw = raws[topomap_state]
+    _picks = mne.pick_types(_raw.info, eeg=True)
+    _sf = _raw.info["sfreq"]
+
+    topomap_entropies = {}
+    for _band_name, (_lo, _hi) in topomap_bands.items():
+        _raw_band = _raw.copy().filter(l_freq=_lo, h_freq=_hi, picks=_picks, verbose=False)
+        _data = _raw_band.get_data(picks=_picks)
+        topomap_entropies[_band_name] = np.array([
+            ant.spectral_entropy(_data[i], sf=_sf, method="welch", normalize=True)
+            for i in range(_data.shape[0])
+        ])
+
+    topomap_picks = _picks
+    return topomap_bands, topomap_entropies, topomap_picks, topomap_state
+
+
+@app.cell
+def _(mne, plt, raws, topomap_bands, topomap_entropies, topomap_picks, topomap_state):
+    _raw = raws[topomap_state]
+
+    _fig, _axes = plt.subplots(1, 4, figsize=(15, 4))
+
+    _picked_info = mne.pick_info(_raw.info, topomap_picks)
+
+    for _ax, _band_name in zip(_axes, topomap_bands):
+        _values = topomap_entropies[_band_name]
+
+        _im, _cn = mne.viz.plot_topomap(
+            _values,
+            _picked_info,
+            axes=_ax,
+            show=False,
+            cmap="Reds",
+        )
+        _ax.set_title(_band_name)
+        _fig.colorbar(_im, ax=_ax, fraction=0.046, pad=0.04, label="Entropy")
+
+    _fig.suptitle(f"Spatial Distribution of Spectral Entropy ({topomap_state} state)")
+    plt.tight_layout()
+    plt.close(_fig)
+    _fig
     return
 
 
@@ -438,26 +573,29 @@ def _(mo):
     Spectral entropy is the (normalized) Shannon entropy of the
     signal's power spectral density. A value near 0 means nearly
     all spectral power sits in a narrow frequency range; a value
-    near 1 means power is close to uniformly distributed across
-    all resolved frequencies. It says nothing about *which*
-    frequencies carry the power, only how concentrated or spread
-    out the distribution is.
+    near 1 means power is close to uniformly distributed across all
+    resolved frequencies (or, for the band-limited and topomap
+    figures above, across the frequencies within that band). It
+    says nothing about *which* frequencies carry the power, only
+    how concentrated or spread out the distribution is.
 
     ### EEG interpretation
 
-    A single EEG channel's spectral entropy is a coarse summary
-    of that channel's spectral shape at one point in time, and
-    should not by itself be interpreted as evidence of a specific
-    cognitive, neurological, or clinical state. It also depends
-    on parameters such as `method` and `nperseg` (see Feature
-    parameters above) — values are only directly comparable when
-    computed with matching parameters.
+    The comparisons above show that spectral entropy varies with
+    three things that must always be reported alongside a value:
+    the **state** the subject was in during recording, the
+    **channel** (scalp location), and the **frequency band**
+    considered. A single spectral entropy value, without this
+    context, is not by itself evidence of a specific cognitive,
+    neurological, or clinical state.
 
-    This example does not apply filtering or artifact removal to
-    the EEG channel, so broadband noise or artifacts could
-    inflate the measured entropy; a full pipeline would typically
-    band-limit and clean the signal before computing this
-    feature.
+    It also depends on parameters such as `method` and `nperseg`
+    (see Feature parameters above) — values are only directly
+    comparable when computed with matching parameters. This example
+    does not apply artifact removal to the EEG channels, so
+    broadband noise or artifacts could inflate the measured
+    entropy; a full pipeline would typically clean the signal
+    before computing this feature.
     """)
     return
 
@@ -473,20 +611,23 @@ def _(mo):
     | Method | Shannon entropy of Welch PSD |
     | Feature | Spectral entropy |
     | Domain | Spectral / Complexity |
-    | Input | 1-D signal (synthetic or single EEG channel) |
-    | Output | Scalar, bounded to [0, 1] when `normalize=True` |
-    | Visualization | Bar chart (cross-signal comparison) |
+    | Input | 1-D signal, single EEG channel, optionally band-pass filtered |
+    | Output | Scalar per channel/band, bounded to [0, 1] when `normalize=True` |
+    | Visualization | Bar charts (state / channel / band comparisons) + scalp topomaps |
     | Main caveat | Value depends on `method` and `nperseg`; not directly comparable across mismatched parameters |
-    | EEG caveat | No filtering/artifact removal applied here; broadband noise can inflate the value |
+    | EEG caveat | No artifact removal applied here; broadband noise can inflate the value |
 
     ### Feature flow
 
-    **Synthetic signal / EEG channel → AntroPy spectral_entropy()
-    → scalar value → Bar chart comparison**
+    **EEG channel (optionally band-filtered) → AntroPy
+    spectral_entropy() → scalar value → bar chart comparison /
+    per-channel scalp topomap**
 
-    This example demonstrates how the same AntroPy feature can be
-    validated on synthetic signals with a known expected
-    direction, then applied unchanged to a real EEG channel.
+    This example demonstrates that the same AntroPy feature, with
+    the same parameters, produces different values depending on
+    the recording state, the channel, and the frequency band —
+    and that computing it per channel yields a spatial map
+    comparable to (but distinct from) a spectral power topomap.
     """)
     return
 
@@ -548,8 +689,7 @@ def _(mo):
     - `matplotlib`
     - `antropy`
 
-    The example uses public data and a fixed random seed
-    (`np.random.default_rng(42)`) for the synthetic noisy signal,
+    The example uses only public data (EEGBCI, subject 1, runs 2/3/4)
     and contains no hard-coded local dataset paths.
 
     Recommended project configuration:
@@ -587,16 +727,17 @@ def _(mo):
     ✓ Feature identified
     ✓ Domain identified
     ✓ Dataset described
-    ✓ Subject and Run specified
+    ✓ Subject and runs specified
     ✓ Sampling frequency displayed
     ✓ Channels described
     ✓ Preprocessing visible
-    ✓ No hidden transformations (including `nperseg` default)
+    ✓ No hidden transformations (including `nperseg` default and
+      band-pass filtering for band-limited comparisons)
     ✓ Main API call visible
     ✓ Important parameters explained
     ✓ Numerical output displayed
     ✓ Output shape explained (scalar, [0, 1])
-    ✓ Relevant visualization (bar chart)
+    ✓ Relevant visualization (bar charts + scalp topomaps)
     ✓ Axes and units identified
     ✓ Mathematical interpretation
     ✓ EEG interpretation with appropriate caution
